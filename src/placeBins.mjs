@@ -1,0 +1,186 @@
+import fs from 'fs'
+import path from 'path'
+import crypto from 'crypto'
+
+
+//memo, 已校驗相符之目標檔(鍵為目標檔絕對路徑, 值為檔案識別＋sha256): 識別(裝置、inode、大小、修改與變更時間)未變者, 本行程內不重複雜湊
+let memo = new Map()
+
+
+//codesBusy, 目標檔被占用或無權覆蓋時, rename回報之錯誤碼
+let codesBusy = ['EPERM', 'EBUSY', 'EACCES']
+
+
+let mkErr = (code, message, extra = {}) => {
+    let err = new Error(message)
+    err.code = code
+    return Object.assign(err, extra)
+}
+
+
+let statOf = async (fp) => {
+    try {
+        return await fs.promises.lstat(fp, { bigint: true })
+    }
+    catch (err) {
+        return null
+    }
+}
+
+
+let idOf = (st, sha256) => {
+    return `${st.dev}:${st.ino}:${st.size}:${st.mtimeNs}:${st.ctimeNs}:${sha256}`
+}
+
+
+let hashOf = async (fp) => {
+    let h = crypto.createHash('sha256')
+    for await (let chunk of fs.createReadStream(fp)) {
+        h.update(chunk)
+    }
+    return h.digest('hex')
+}
+
+
+//isSame, 目標檔是否為一般檔案(非連結)且大小與SHA-256皆符合
+let isSame = async (fp, sha256, size) => {
+    let st = await statOf(fp)
+    if (st === null || !st.isFile() || st.size !== BigInt(size)) {
+        return false
+    }
+    let id = idOf(st, sha256)
+    if (memo.get(fp) === id) {
+        return true
+    }
+    let h = ''
+    try {
+        h = await hashOf(fp)
+    }
+    catch (err) {
+        return false
+    }
+    if (h !== sha256) {
+        memo.delete(fp)
+        return false
+    }
+    let st2 = await statOf(fp)
+    if (st2 !== null && idOf(st2, sha256) === id) { //雜湊期間識別未變才記住
+        memo.set(fp, id)
+    }
+    return true
+}
+
+
+//renameRetry, 覆蓋既有檔; 被占用類錯誤(Windows下防毒掃描新檔時亦有)重試, 逾次數丟出最後一次錯誤
+let renameRetry = async (from, to, attempts, delayMs) => {
+    let last = null
+    for (let i = 1; i <= attempts; i++) {
+        try {
+            await fs.promises.rename(from, to)
+            return
+        }
+        catch (err) {
+            last = err
+            if (!codesBusy.includes(err.code) || i === attempts) {
+                break
+            }
+            await new Promise((resolve) => {
+                setTimeout(resolve, delayMs * i)
+            })
+        }
+    }
+    throw last
+}
+
+
+//placeOne, 放置單一檔, 回傳'skip'(已相符)、'copy'(本次寫入)、'exists'(寫入時他程序已放妥相同內容)
+let placeOne = async (f, dirTarget, attempts, delayMs) => {
+    let to = path.join(dirTarget, ...f.path.split('/'))
+
+    //已相符者略過
+    if (await isSame(to, f.sha256, f.size)) {
+        return 'skip'
+    }
+
+    //暫存檔(同資料夾, 以便原子更名), 驗證暫存檔(即將發布者)之內容後才更名, 不讀到半檔
+    let tmp = `${to}.${process.pid}-${crypto.randomBytes(4).toString('hex')}.tmp`
+    try {
+        await fs.promises.mkdir(path.dirname(to), { recursive: true })
+        await fs.promises.copyFile(f.from, tmp, fs.constants.COPYFILE_EXCL)
+        let st = await statOf(tmp)
+        let h = await hashOf(tmp)
+        if (st === null || st.size !== BigInt(f.size) || h !== f.sha256) {
+            throw mkErr('E_HASH_MISMATCH', `w-canvas: the copy of ${f.path} does not match the manifest (the source ${f.from} changed after it was verified), expected sha256 ${f.sha256} and ${f.size} bytes`, { step: 'place', file: f.path })
+        }
+        await renameRetry(tmp, to, attempts, delayMs)
+    }
+    catch (err) {
+        await fs.promises.rm(tmp, { force: true }).catch(() => {})
+
+        //他程序已先放妥相同內容(多程序同時首次呼叫; 其已載入時更名會被拒)視為成功
+        if (err.code !== 'E_HASH_MISMATCH' && await isSame(to, f.sha256, f.size)) {
+            return 'exists'
+        }
+        if (err.code === 'E_HASH_MISMATCH') {
+            throw err
+        }
+        if (codesBusy.includes(err.code) && (await statOf(to)) !== null) {
+            throw mkErr('E_BIN_LOCKED', `w-canvas: cannot replace ${to} (${err.code}): the file differs from the expected one (${f.path}, sha256 ${f.sha256}) but it is in use or protected. On Windows a loaded DLL cannot be replaced, which happens when an older canvas.node is still loaded by another process (for example a node service or pm2 app that has not restarted since the w-canvas version changed). Stop every process that has loaded canvas, then retry. If the file is read-only, make it writable.`, { step: 'place', file: f.path, target: to, cause: err })
+        }
+        throw mkErr('E_COPY', `w-canvas: cannot place ${f.path} into ${path.dirname(to)} (${err.code || 'error'}): ${err.message}. The canvas package folder must be writable at the first call (or copy canvas.node and the dlls into it beforehand).`, { step: 'place', file: f.path, target: to, cause: err })
+    }
+
+    //記住剛發布之檔(已驗證其內容, 更名不改內容)
+    let st = await statOf(to)
+    if (st !== null) {
+        memo.set(to, idOf(st, f.sha256))
+    }
+    return 'copy'
+}
+
+
+/**
+ * 把檔案組之各檔放置到canvas套件之資料夾(內部使用)
+ *
+ * 每檔: 目標已存在且大小與SHA-256相符者略過; 否則複製為同資料夾之暫存檔並驗證其內容，再以更名覆蓋目標(原子，不讀到半檔)。
+ * 更名被拒(目標被其他程序載入，Windows之DLL鎖)時，若目標此時已相符(他程序剛放妥)視為成功，否則reject E_BIN_LOCKED。
+ * canvas.node最後放置(中途失敗時不留下有canvas.node而缺dll之狀態)。
+ *
+ * @param {Array} files 輸入檔案陣列，每項{ path(組內相對路徑，/分隔), sha256, size, from(來源檔之絕對路徑) }
+ * @param {String} dirTarget 輸入目標根目錄之絕對路徑(canvas套件資料夾)，各檔放到其下之path
+ * @param {Object} [opt={}] 輸入設定物件，預設{}
+ * @param {Function} [opt.trace=null] 輸入通知函數(type, info)，每檔放置後通知'canvas-place'，預設null
+ * @param {Integer} [opt.attempts=5] 輸入更名被占用類錯誤時之最多嘗試次數，預設5
+ * @param {Number} [opt.delayMs=100] 輸入重試間隔基數毫秒，預設100
+ * @returns {Promise} 回傳Promise，resolve回傳{ total, copied, skipped, exists }，reject回傳帶code之Error(E_BIN_LOCKED、E_COPY、E_HASH_MISMATCH)
+ */
+async function placeBins(files, dirTarget, opt = {}) {
+    let trace = typeof opt.trace === 'function' ? opt.trace : null
+    let attempts = Number.isInteger(opt.attempts) && opt.attempts > 0 ? opt.attempts : 5
+    let delayMs = Number.isFinite(opt.delayMs) && opt.delayMs >= 0 ? opt.delayMs : 100
+
+    //canvas.node最後
+    let isNode = (f) => f.path.endsWith('.node')
+    let list = [...files.filter((f) => !isNode(f)), ...files.filter(isNode)]
+
+    let r = { total: list.length, copied: 0, skipped: 0, exists: 0 }
+    for (let f of list) {
+        let res = await placeOne(f, dirTarget, attempts, delayMs)
+        if (res === 'copy') {
+            r.copied++
+        }
+        else if (res === 'skip') {
+            r.skipped++
+        }
+        else {
+            r.exists++
+        }
+        if (trace) {
+            trace('canvas-place', { path: f.path, result: res })
+        }
+    }
+    return r
+}
+
+
+export default placeBins

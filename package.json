@@ -1,0 +1,30 @@
+{
+  "name": "w-canvas",
+  "version": "1.0.1",
+  "main": "dist/w-canvas.umd.js",
+  "dependencies": {
+    "canvas": "3.2.3",
+    "wsemi": "^1.9.38"
+  },
+  "devDependencies": {
+    "w-package-tools": "^1.1.21"
+  },
+  "scripts": {
+    "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
+    "deploy": "gh-pages -d docs"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/yuda-lyu/w-canvas.git"
+  },
+  "keywords": [
+    "package",
+    "tool",
+    "canvas",
+    "node-canvas",
+    "windows",
+    "nodejs"
+  ],
+  "author": "yuda-lyu(semisphere)",
+  "license": "MIT"
+}

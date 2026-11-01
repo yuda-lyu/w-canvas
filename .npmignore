@@ -1,0 +1,18 @@
+node_modules
+.agents
+.opencode
+.claude
+CLAUDE*.md
+AGENTS*.md
+.env
+tmp
+testPending
+/test/_tmp/
+
+# 外部執行檔(規格S1、S5): bin/只有清單入包, 快取不入包
+/bin/*
+!/bin/manifest.json
+/bin-cache/
+
+# 指引要求文件入 git 版控、不入 npm 包(2026-10-22)
+sgud

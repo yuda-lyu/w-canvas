@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <meta charset="utf-8">
+    <title>WCanvas.mjs - Documentation</title>
+    
+    
+    <script src="scripts/prettify/prettify.js"></script>
+    <script src="scripts/prettify/lang-css.js"></script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc.css">
+    <script src="scripts/nav.js" defer></script>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body>
+
+<input type="checkbox" id="nav-trigger" class="nav-trigger" />
+<label for="nav-trigger" class="navicon-button x">
+  <div class="navicon"></div>
+</label>
+
+<label for="nav-trigger" class="overlay"></label>
+
+<nav >
+    
+    
+    <h2><a href="index.html">Home</a></h2><h3>Global</h3><ul><li><a href="global.html#WCanvas">WCanvas</a></li><li><a href="global.html#ensureBins">ensureBins</a></li><li><a href="global.html#placeBins">placeBins</a></li></ul>
+    
+</nav>
+
+<div id="main">
+    
+    <h1 class="page-title">WCanvas.mjs</h1>
+    
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import fs from 'fs'
+import path from 'path'
+import { createRequire } from 'module'
+import get from 'lodash-es/get.js'
+import isobj from 'wsemi/src/isobj.mjs'
+import isfun from 'wsemi/src/isfun.mjs'
+import getTrace from 'wsemi/src/getTrace.mjs'
+import ensureBins from './ensureBins.mjs'
+import placeBins from './placeBins.mjs'
+
+
+//keysFwd, 轉傳給wsemi之fsEnsureBins之opt鍵(白名單; 其餘鍵忽略, floatingManifestUrl與pkgRoot等會改變信任錨或套件根者不轉傳), 轉傳之鍵由其檢測(型別不符為E_ARG, 不靜默改用預設: 例如offline給了字串而被忽略會使離線部署誤連網)
+//keysFun, 其中之回呼型: 給了而非函數視為未給(K3), 不影響取得之安全性
+let keysFwd = ['cacheDir', 'mirror', 'offline', 'fetch', 'onProgress', 'onTrace', 'maxAttempts', 'retryDelayMs', 'stallMs', 'totalMs']
+let keysFun = ['fetch', 'onProgress', 'onTrace']
+
+
+//nameBundle, 清單中檔案組之名稱(bin/manifest.json)
+let nameBundle = 'canvas'
+
+
+//warned, 已警告過之訊息(同一鍵同一原因每個行程只警告一次)
+let warned = new Set()
+
+
+//inflight, 同行程內同一canvas資料夾之放置共用同一次進行(鍵為canvas資料夾絕對路徑)
+let inflight = new Map()
+
+
+let mkErr = (code, message, extra = {}) => {
+    let err = new Error(message)
+    err.code = code
+    return Object.assign(err, extra)
+}
+
+
+//parseOpt, opt之檢測(輸入參數之檢測機制K3、V4、V5、V7): opt非一般物件視為{}, 各鍵給了而非預期者視為未給改用預設, opt.debug為true時才警告(固定詞彙, 不含傳入之值)
+let parseOpt = (opt) => {
+    let o = isobj(opt) ? opt : {}
+    let debug = o.debug === true
+    let funLog = isfun(o.funLog) ? o.funLog : null
+    let warn = (msg) => {
+        if (!debug || warned.has(msg)) {
+            return
+        }
+        warned.add(msg)
+        if (funLog) {
+            try {
+                funLog(msg)
+            }
+            catch (err) {} // eslint-disable-line no-empty
+        }
+        else {
+            console.warn(msg)
+        }
+    }
+    if (opt !== undefined &amp;&amp; opt !== null &amp;&amp; !isobj(opt)) {
+        warn('[w-canvas WCanvas] invalid opt: must be a plain object, using default {}')
+    }
+    let pick = (k, dflt) => {
+        let v = o[k]
+        if (v === undefined || v === null) {
+            return dflt
+        }
+        if (typeof v !== 'string' || v === '') {
+            warn(`[w-canvas WCanvas] invalid opt.${k}: must be a non-empty string, using default ${dflt}`)
+            return dflt
+        }
+        return v
+    }
+    if (o.debug !== undefined &amp;&amp; o.debug !== null &amp;&amp; typeof o.debug !== 'boolean') {
+        warn('[w-canvas WCanvas] invalid opt.debug: must be a boolean, using default false')
+    }
+    if (o.funLog !== undefined &amp;&amp; o.funLog !== null &amp;&amp; !isfun(o.funLog)) {
+        warn('[w-canvas WCanvas] invalid opt.funLog: must be a function, using default console.warn')
+    }
+    let platform = pick('platform', process.platform)
+    let arch = pick('arch', process.arch)
+    let fwd = {}
+    for (let k of keysFwd) {
+        let v = o[k]
+        if (v === undefined || v === null) {
+            continue
+        }
+        if (keysFun.includes(k) &amp;&amp; !isfun(v)) { //回呼型給了而非函數視為未給(K3)
+            warn(`[w-canvas WCanvas] invalid opt.${k}: must be a function, using default (not set)`)
+            continue
+        }
+        fwd[k] = v
+    }
+    return { o, platform, arch, fwd }
+}
+
+
+//isSupported, 本版只支援win32-x64(官方預建檔之平台)
+let isSupported = (platform, arch) => {
+    return platform === 'win32' &amp;&amp; arch === 'x64'
+}
+
+
+//isFile
+let isFile = (fp) => {
+    try {
+        return fs.statSync(fp).isFile()
+    }
+    catch (err) {
+        return false
+    }
+}
+
+
+//resolveCanvas, 找canvas套件(以本檔為基準), 回傳{ dir, main, version, req }, 找不到回傳null; req為以本檔為基準之require(載入用)
+let resolveCanvas = () => {
+    try {
+        let req = createRequire(import.meta.url)
+        let fpPkg = req.resolve('canvas/package.json')
+        let version = JSON.parse(fs.readFileSync(fpPkg, 'utf8')).version
+        return { dir: path.dirname(fpPkg), main: req.resolve('canvas'), version: String(version), req }
+    }
+    catch (err) {
+        return null
+    }
+}
+
+
+//listFiles, 檔案組之各檔{ path, sha256, size, from }: 路徑與雜湊取自本次採用之清單項(entries), 絕對路徑取自bundles
+let listFiles = (bins) => {
+    let entry = get(bins, ['entries', nameBundle], null)
+    let from = get(bins, ['bundles', nameBundle, 'files'], null)
+    let r = []
+    for (let f of [...get(entry, 'files', []), ...get(entry, 'archives', []).flatMap((a) => get(a, 'extract.files', []))]) {
+        r.push({ path: f.path, sha256: f.sha256, size: f.size, from: get(from, [f.path], '') })
+    }
+    return r
+}
+
+
+//loadCanvas, 以絕對路徑載入canvas(與放置檔案者為同一資料夾), 回傳其匯出(module.exports, 原樣回傳全部匯出)
+//canvas為CommonJS, 以require而非import(): 載入失敗(如缺執行階段)時require會自模組快取移除該模組, 修正後同行程內可再呼叫重試; import()則快取失敗之模組記錄, 同行程內無法重試(實測Node 24)
+let loadCanvas = async (cv, trace) => {
+    let C = null
+    try {
+        C = cv.req(cv.main)
+    }
+    catch (err) {
+        if (trace) {
+            trace('canvas-load', { ok: false, code: get(err, 'code', null) })
+        }
+        throw mkErr('E_CANVAS_LOAD', `w-canvas: canvas could not be loaded from ${cv.dir} (${get(err, 'code', 'error')}): ${get(err, 'message', String(err))}`, { cause: err })
+    }
+    if (trace) {
+        trace('canvas-load', { ok: true, code: null })
+    }
+    return C
+}
+
+
+/**
+ * 取得可用之node-canvas(官方npm套件canvas)，回傳其匯出(createCanvas、loadImage、registerFont等canvas之全部匯出，原樣)
+ *
+ * npm 12預設不執行canvas之安裝腳本(prebuild-install)，故安裝後canvas缺少build/Release/canvas.node而無法載入。
+ * 本函數於首次調用時，經ensureBins依bin/manifest.json自官方GitHub版本標籤(Automattic/node-canvas)下載預建檔(tar.gz)，以SHA-256與大小逐檔校驗(canvas.node與44個dll，共45檔)後存於快取，
+ * 再把這45檔複製到canvas套件之build/Release(已存在且雜湊相符者略過，否則寫入同資料夾之暫存檔並驗證後以更名覆蓋，不讀到半檔，多個行程同時首次調用皆可成功)，最後動態載入canvas並回傳其匯出。
+ * 之後自快取取得(亦校驗)，安裝時不下載。預建檔須與canvas之JS同版，故本套件釘選canvas確切版本，已安裝之canvas版本與清單所載不同時reject E_VERSION。
+ *
+ * 本版只支援win32-x64。其他平台若canvas自身之build/Release/canvas.node已存在(例如使用端自行編譯)則直接載入，否則reject E_PLATFORM。
+ *
+ * 離線與內網之用法(環境變數W_BIN_CACHE、W_BIN_MIRROR、W_BIN_OFFLINE)見README〈外部執行檔〉，部署前可預先調用WCanvas.ensureBins()取得。
+ * Windows下目標檔若被其他行程載入(例如換版時舊版canvas.node仍在執行中)無法覆蓋，reject E_BIN_LOCKED，須先結束載入舊版之行程。
+ *
+ * canvas: Automattic/node-canvas(官方預建檔取自其GitHub版本標籤之資產)
+ *
+ * @param {Object} [opt={}] 輸入設定物件，非一般物件視為{}，各鍵給了而非預期之型別視為未給並採用預設，預設{}
+ * @param {Boolean} [opt.debug=false] 輸入是否輸出警告，為true時，非預期之opt鍵改用預設會輸出警告(固定詞彙，不含傳入之值，同一原因每個行程只輸出一次)，非布林視為false，預設false
+ * @param {Function} [opt.funLog=null] 輸入警告輸出函數，格式為(msg)=>{}，opt.debug為true時有給則交此函數，未給則用console.warn，預設null
+ * @param {String} [opt.platform=process.platform] 輸入作業系統名稱，僅供測試平台分支，預設process.platform
+ * @param {String} [opt.arch=process.arch] 輸入處理器架構名稱，僅供測試平台分支，預設process.arch
+ * @param {String} [opt.cacheDir=''] 輸入快取資料夾(其下為&lt;組識別>/build/Release/...)，優先於環境變數W_BIN_CACHE，''為預設位置(套件根之bin-cache/)，轉傳給wsemi之fsEnsureBins檢測，預設''
+ * @param {String} [opt.mirror=undefined] 輸入鏡像(本地資料夾或http(s)基底網址)，給了即優先於環境變數W_BIN_MIRROR(空字串為不使用鏡像)，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Boolean} [opt.offline=undefined] 輸入是否離線，給了即優先於環境變數W_BIN_OFFLINE，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Function} [opt.fetch=null] 輸入fetch函數(測試注入或處理認證)，未給時用全域fetch，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Function} [opt.onProgress=null] 輸入進度通知函數，收到wsemi之fsEnsureBins之進度事件{ pkg, step, name, ... }，其拋錯皆忽略，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Function} [opt.onTrace=null] 輸入觀察回調函數，格式為(e)=>{}，e為凍結之事件物件{ type, ... }，於事件發生當下同步呼叫，拋錯皆忽略，供測試以事件同步與診斷；除wsemi之fsEnsureBins之事件(manifest、cache、download、extract、publish、ready等)外，另有本函數之事件：canvas-platform(含platform、arch、supported)、canvas-place(每個檔案放置後，含path與result為skip[已相符]、copy[本次寫入]、exists[寫入時他行程已放妥])、canvas-placed(整組放置後，含total、copied、skipped、exists)、canvas-load(載入canvas後，含ok與code)，預設null
+ * @param {Integer} [opt.maxAttempts=3] 輸入下載之最多嘗試次數，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Number} [opt.retryDelayMs=1000] 輸入下載之重試間隔基數毫秒，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Number} [opt.stallMs=30000] 輸入下載之停滯毫秒數，轉傳給wsemi之fsEnsureBins檢測
+ * @param {Number} [opt.totalMs=600000] 輸入每個檔下載之整體時間上限毫秒數，轉傳給wsemi之fsEnsureBins檢測
+ * @returns {Promise} 回傳Promise，resolve回傳canvas之匯出(createCanvas、loadImage、registerFont等)，reject回傳帶code之Error：E_PLATFORM(不支援之平台且無自行編譯之canvas.node)、E_CANVAS_MISSING(找不到canvas套件)、E_VERSION(canvas版本與預建檔不同)、E_BIN_LOCKED(目標檔被其他行程載入而無法覆蓋)、E_COPY(無法寫入canvas套件資料夾)、E_CANVAS_LOAD(放置後載入canvas失敗)，以及取得預建檔時wsemi之fsEnsureBins之E_OFFLINE_MISSING、E_HASH_MISMATCH、E_SIZE_MISMATCH、E_EXTRACT、E_MANIFEST、E_ARG、E_NETWORK、E_HTTP、E_TIMEOUT等
+ * @example
+ * import fs from 'fs'
+ * import WCanvas from 'w-canvas'
+ *
+ * async function test() {
+ *
+ *     //WCanvas, 首次調用時下載並校驗官方預建檔，複製到canvas套件後載入
+ *     let { createCanvas, loadImage, registerFont } = await WCanvas() // eslint-disable-line no-unused-vars
+ *
+ *     //畫一個藍色矩形與中英文字
+ *     let canvas = createCanvas(240, 80)
+ *     let ctx = canvas.getContext('2d')
+ *     ctx.fillStyle = '#fff'
+ *     ctx.fillRect(0, 0, 240, 80)
+ *     ctx.fillStyle = '#1976d2'
+ *     ctx.fillRect(10, 10, 60, 60)
+ *     ctx.fillStyle = '#000'
+ *     ctx.font = '24px sans-serif'
+ *     ctx.fillText('測試 canvas', 80, 48)
+ *
+ *     //輸出PNG
+ *     let buf = canvas.toBuffer('image/png')
+ *     fs.writeFileSync('./test-canvas.png', buf)
+ *     console.log('size', buf.length > 0)
+ *     // size true
+ *
+ *     //loadImage
+ *     let img = await loadImage(buf)
+ *     console.log('wh', img.width, img.height)
+ *     // wh 240 80
+ *
+ *     fs.unlinkSync('./test-canvas.png')
+ * }
+ * test()
+ *     .catch((err) => {
+ *         console.log('catch', err)
+ *     })
+ *
+ */
+async function WCanvas(opt = {}) {
+
+    //parseOpt
+    let { o, platform, arch, fwd } = parseOpt(opt)
+    let trace = getTrace(o)
+
+    //platform
+    let supported = isSupported(platform, arch)
+    if (trace) {
+        trace('canvas-platform', { platform, arch, supported })
+    }
+
+    //canvas套件
+    let cv = resolveCanvas()
+
+    //不支援之平台: 不下載; canvas自身之canvas.node已存在(使用端自行編譯)則直接載入
+    if (!supported) {
+        if (cv !== null &amp;&amp; isFile(path.join(cv.dir, 'build', 'Release', 'canvas.node'))) {
+            return loadCanvas(cv, trace)
+        }
+        throw mkErr('E_PLATFORM', `w-canvas: ${platform}-${arch} is not supported (this version provides the official prebuilt files for win32-x64 only), and the canvas package has no build/Release/canvas.node of its own. Build canvas from source on this machine (the install script of canvas, npm rebuild canvas with scripts allowed) so that build/Release/canvas.node exists, or use win32-x64.`, { platform, arch })
+    }
+    if (cv === null) {
+        throw mkErr('E_CANVAS_MISSING', 'w-canvas: the canvas package cannot be resolved from w-canvas (it is a dependency of w-canvas, pinned to the exact version of the prebuilt files). Reinstall w-canvas.')
+    }
+
+    //取得預建檔(快取、鏡像或GitHub, 皆依清單校驗), 取不到時維持wsemi之帶code之Error
+    let bins = await ensureBins({ ...fwd, names: nameBundle })
+
+    //版本: 預建檔須與canvas之JS同版
+    let verBin = String(get(bins, 'manifest.version', ''))
+    if (cv.version !== verBin) {
+        throw mkErr('E_VERSION', `w-canvas: canvas ${cv.version} is installed at ${cv.dir}, but the prebuilt files of this w-canvas are for canvas ${verBin}. Install canvas ${verBin} exactly (w-canvas pins that version; check overrides, resolutions or a hoisted canvas of another version).`, { installed: cv.version, expected: verBin })
+    }
+
+    //放置: 同行程內同一canvas資料夾共用同一次進行
+    let files = listFiles(bins)
+    let job = inflight.get(cv.dir)
+    if (!job) {
+        job = placeBins(files, cv.dir, { trace })
+            .finally(() => {
+                inflight.delete(cv.dir)
+            })
+        inflight.set(cv.dir, job)
+    }
+    let r = await job
+    if (trace) {
+        trace('canvas-placed', { total: r.total, copied: r.copied, skipped: r.skipped, exists: r.exists })
+    }
+
+    return loadCanvas(cv, trace)
+}
+
+
+//ensureBins, 部署前預先取得官方預建檔至快取, 以靜態屬性掛於主函數(主檔為default匯出, 不加具名匯出)
+WCanvas.ensureBins = ensureBins
+
+
+export default WCanvas
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+    
+    
+</div>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc3/jsdoc">JSDoc 4.0.5</a> on Sun Nov 01 2026 17:02:08 GMT+0800 (台北標準時間) using the <a href="https://github.com/clenemt/docdash">docdash</a> theme.
+</footer>
+
+<script>prettyPrint();</script>
+<script src="scripts/polyfill.js"></script>
+<script src="scripts/linenumber.js"></script>
+
+
+
+</body>
+</html>
