@@ -179,8 +179,10 @@ describe(`bin/manifest.json`, function() {
         assert.strict.equal(attr.trim().endsWith('binary: set'), true, attr)
     })
 
-    //S1、S5、T1: npm包不含外部執行檔, bin/只有清單; 先放誘餌檔(缺忽略規則時確定性變紅)
-    it(`should not pack external executables into the npm package, only bin/manifest.json (S1, S5, T1)`, function() {
+    //S1、S5、T1; dspec〈自有套件之npm發布範圍〉原則1、原則2〈套件測試之npm包檢查〉①②、原則4:
+    //①不得入包只有外部執行檔與壓縮檔、bin/除manifest.json外之檔、CLAUDE*.md、tmp/、test/_tmp/、.env; sgud/、docs/、test/、toolg/、script.txt等git版控內容依原則1隨包, 不斷言其不在
+    //②大小上限只計執行期之src/、dist/、bin/; 先放誘餌檔(缺忽略規則時確定性變紅)
+    it(`should not pack external executables, archives, bin/ files other than the manifest, CLAUDE*.md, tmp/, test/_tmp/ nor .env, but pack sgud/ and test/tools/, and keep the runtime src/dist/bin small (S1, S5, T1; npm發布範圍 principle 1, principle 2 items 1 and 2, principle 4)`, function() {
         fs.mkdirSync(fdt, { recursive: true })
         fs.writeFileSync(`${fdt}/probe.dll`, 'x')
         fs.mkdirSync(fdDecoy, { recursive: true })
@@ -197,12 +199,28 @@ describe(`bin/manifest.json`, function() {
         let fps = info.files.map((v) => v.path)
         assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|node|msi|zip|7z|gz|tgz)$/i.test(v)), [])
         assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('bin/') || v.startsWith('bin-cache/')), ['bin/manifest.json'])
-        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/') || v.startsWith('tmp/') || /^CLAUDE/.test(v)), [])
-        //dspec〈自有套件之npm發布範圍〉原則4: sgud/一律不排除, 隨包發布
+        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/') || v.startsWith('tmp/') || /^CLAUDE/.test(v) || /(^|\/)\.env$/.test(v)), [])
+
+        //原則1、原則4: 套件檔案、sgud/、test/tools/一律不排除, 隨包發布
         for (let k of ['package.json', 'README.md', 'LICENSE', 'src/WCanvas.mjs', 'src/ensureBins.mjs', 'src/placeBins.mjs', 'bin/manifest.json', 'sgud/state/state.md', 'sgud/rule/rulebook.md']) {
             assert.strict.equal(fps.includes(k), true, `the package must include ${k}`)
         }
-        assert.strict.equal(info.size < 1024 * 1024, true, `the package must stay small: ${info.size}`) //無大檔入包(預建檔另行下載)
+
+        //原則1: npm包＝git版控之內容, sgud/與test/tools/之版控檔須逐一在包內(各至少一個)
+        let tracked = execFileSync('git', ['ls-files', '-z', '--', 'sgud', 'test/tools'], { encoding: 'utf8', windowsHide: true }).split('\0').filter((v) => v !== '')
+        assert.strict.equal(tracked.some((v) => v.startsWith('sgud/')), true, 'sgud/ must have files tracked by git')
+        assert.strict.equal(tracked.some((v) => v.startsWith('test/tools/')), true, 'test/tools/ must have files tracked by git')
+        for (let k of tracked) {
+            assert.strict.equal(fps.includes(k), true, `the package must include ${k} (tracked by git)`)
+        }
+
+        //原則2②: 大小上限只計執行期之src/、dist/、bin/(整包含docs/、test/、sgud/等開發資產, 不計), 門檻: 總和<1MB、單檔<=500KB
+        let rt = info.files.filter((v) => /^(src|dist|bin)\//.test(v.path))
+        assert.strict.equal(rt.length > 0, true, 'src/, dist/ or bin/ must have files in the package')
+        let rtSum = rt.reduce((a, v) => a + v.size, 0)
+        let rtMax = Math.max(...rt.map((v) => v.size))
+        assert.strict.equal(rtSum < 1024 * 1024, true, `the runtime files (src/, dist/, bin/ only) must stay below 1MB in total: ${rtSum}`) //無大檔入包(預建檔另行下載)
+        assert.strict.equal(rtMax <= 500 * 1024, true, `each runtime file (src/, dist/, bin/ only) must stay at most 500KB: ${rtMax}`)
     })
 
 })
