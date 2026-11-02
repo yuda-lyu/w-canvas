@@ -8,7 +8,7 @@ import { makeFakePkg } from './tools/fakePkg.mjs'
 import spawnChild from './tools/child.mjs'
 
 
-//由現行src建出dist至test/_tmp(不改寫repo之dist/): 離開碼0、無無法解析之引入; 語法錯以非0結束; 外部模組⊆Node內建∪dependencies;
+//由現行src建出dist至test/_tmp(不改寫repo之dist/; 複製src、toolg/gDistRollup.mjs、package.json至副本並以spawn指定cwd執行toolg腳本): 離開碼0、無無法解析之引入; 語法錯以非0結束; 外部模組⊆Node內建∪dependencies;
 //dist可載入, 且裝在專案內(套件根為其node_modules/w-canvas)自子資料夾之工作目錄調用時, 預建檔取至其套件根之bin-cache/並放置到canvas套件(假組與假canvas, 以本地鏡像離線供檔)
 describe(`unit-dist`, function() {
     this.timeout(300000)
@@ -75,6 +75,20 @@ describe(`unit-dist`, function() {
         assert.ok(reqs.length > 0)
         assert.strict.deepStrictEqual(bad, [])
         assert.strict.equal(reqs.includes('canvas'), false)
+    })
+
+    //R-BIN-EXE-01 之 6: url、crypto、stream、stream/promises、child_process、module、fs、path 列為 external 與 globals(wsemi之fsEnsureBins與createRequire所用): 以建出之dist驗, require、AMD define、全域變數三分支皆須帶有
+    it('UMD build keeps url, crypto, stream, stream/promises, child_process, module, fs and path external in the require, define and global branches', function() {
+        let c = fs.readFileSync(path.join(fdOk, 'dist', 'w-canvas.umd.js'), 'utf8')
+        let reqs = new Set([...c.matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]))
+        let defs = new Set(JSON.parse(c.match(/define\((\[[^\]]*\])/)[1]))
+        let glbs = c.match(/\["w-canvas"\]=\w+\(([^)]*)\)/)[1]
+        for (let m of ['url', 'crypto', 'stream', 'stream/promises', 'child_process', 'module', 'fs', 'path']) {
+            assert.strict.equal(reqs.has(m), true, `require lacks ${m}`)
+            assert.strict.equal(defs.has(m), true, `define lacks ${m}`)
+            let g = m.includes('/') ? `["${m}"]` : `.${m}`
+            assert.strict.equal(new RegExp(`\\b\\w${g.replace(/[.[\]]/g, '\\$&')}(?![\\w$"])`).test(glbs), true, `global lacks ${m}: ${glbs}`)
+        }
     })
 
     it('no top-level __filename/__dirname declarations and import.meta only uses url in src', function() {

@@ -8,15 +8,16 @@
 - 單一擁有者: 取得一律經 `src/ensureBins.mjs`(轉呼叫 wsemi `fsEnsureBins`,`pkgRoot` 固定為本套件根,不轉傳 `floatingManifestUrl`);下載、快取、鏡像、校驗、tgz 解出與離線全由 wsemi 負責(需 wsemi ≥ 1.9.38,tgz 自該版起).**套件端不得自寫下載、快取、鏡像、校驗、解壓**(E2).
 - 規則:
   1. 清單 `bin/manifest.json`(`mode: "pinned"`、無 `commit`:只有廠商檔,無 repo 內之檔)一律由 `toolg/genBinManifest.mjs` 依官方預建檔之實際內容產生,不手寫 sha256(M1);頂層 `version` 為內附預建檔之版本(= canvas 版本);檔案組 `canvas`(M6)含 1 個壓縮檔(`url` 為官方版本標籤之資產網址,非 `releases/latest`,S3/M2;`extract.type` 為 `tgz`)與其 45 個成員(`build/Release/canvas.node` 與 44 個 dll,逐檔 sha256 與大小);**建置中繼檔**(`binding.sln`、`canvas.vcxproj`、`.filters`、`config.gypi`)與執行無關,不列入.壓縮檔之雜湊以 GitHub release API 公告之 asset digest 核對(M3,工具自動核對,取不到才於 note 載明「首次下載自算」).
-  2. 預建檔不入 git、不入 npm 包(本套件 repo 不鏡像,S3);npm 包 `bin/` 下只有 `bin/manifest.json`(S1):`.npmignore` 為 `/bin/*`、`!/bin/manifest.json`、`/bin-cache/`、`/test/_tmp/`、`sgud`、`CLAUDE*.md`;`.gitignore` 含 `/bin-cache/`、`test/_tmp`、`CLAUDE*.md`(不得加 `!CLAUDE.md`,也不得排除 `sgud`);`.gitattributes` 為 `bin/** binary`.
+  2. 預建檔不入 git、不入 npm 包(本套件 repo 不鏡像,S3);npm 包 `bin/` 下只有 `bin/manifest.json`(S1):`.npmignore` 首段抄錄 `.gitignore`(含 `CLAUDE*.md`)後加 `/bin/*`、`!/bin/manifest.json`、`/bin-cache/`、`/test/_tmp/`(依 dspec〈自有套件之npm發布範圍〉,不列 `sgud`:`sgud/` 隨包發布);`.gitignore` 含 `/bin-cache/`、`test/_tmp`、`CLAUDE*.md`(不得加 `!CLAUDE.md`,也不得排除 `sgud`);`.gitattributes` 為 `bin/** binary`.
   3. 首次使用時下載(D1);**不得**有 `postinstall`/`install`/`preinstall`/`prepare`.npm 12 擋下 canvas 之安裝腳本為預期,README 已說明,不要求使用端設 `allowScripts`.
   4. 離線與內網依規格 O1~O5:`W_BIN_CACHE`、`W_BIN_MIRROR`、`W_BIN_OFFLINE` 由 wsemi 統一讀取;README〈外部執行檔〉為對使用者之說明(O5).鏡像可放解出後之整組 `<鏡像>/w-canvas/<組識別>/build/Release/<檔>` 或壓縮檔 `<鏡像>/w-canvas/<壓縮檔 sha256>/canvas-v<版>-napi-v7-win32-x64.tar.gz`(兩種皆有測試).
   5. `ensureBins` 為 `src/ensureBins.mjs` 之預設匯出,並掛於 `WCanvas.ensureBins`(主檔 UMD 為 `module.exports = 函數`,不可改為具名匯出);`WCanvas.ensureBins` **只取至快取,不放置,也不檢查作業系統**(連網機器可為離線部署預備鏡像,規格 O4).
-  6. UMD 建置(`toolg/gDistRollup.mjs`)須把 `url`、`crypto`、`stream`、`stream/promises`、`child_process`、`module`、`fs`、`path` 列為 external 與 globals;canvas 以絕對路徑動態載入,不經模組名稱,故不列入;套件根以 `import.meta.url` 推得,`dist/` 與 `src/` 皆須位於套件根之下一層.
+  6. UMD 建置:`toolg/gDistRollup.mjs` 依 dspec〈自有套件之發布與建置腳本〉(標準寫法,選項寫於本檔);建出之 dist 須把 `url`、`crypto`、`stream`、`stream/promises`、`child_process`、`module`、`fs`、`path` 列為 external 與 globals(`require`、AMD `define`、全域變數三分支皆帶有);canvas 以絕對路徑動態載入,不經模組名稱,故不列入.測試以副本並指定 cwd 執行 toolg 腳本,驗建出之 dist(`unit-dist`).
+  7. 執行期(程式設計,與建置腳本無關):套件根於 `src/ensureBins.mjs` 以 `import.meta.url` 推得,`dist/` 與 `src/` 皆須位於套件根之下一層(裝在專案內時 `dist/w-canvas.umd.js` 位於 `node_modules/w-canvas/dist/`,快取仍取至其套件根之 `bin-cache/`).
 - 盤點指令: Grep `src/` 搜 `fsDownloadFile|fsMergeFiles|w-zip|fetch\(|github\.com|child_process|tar\.exe`(應無命中,測試 `unit-binManifest` 內有同判準);`node C:/opensrcOper/tools/scan-bins.mjs --only w-canvas`(主控工具,應為 OK);`npm pack --dry-run`(`bin/` 下只見 `bin/manifest.json`).
 - 站點全集與判準(2026-11-01): 取得入口只有 `src/ensureBins.mjs` 一處(`src/WCanvas.mjs` 經它).
 - 已知限制: ①快取夾(預設 `<套件根>/bin-cache/<組識別>/`)須可寫(首次取得時),`node_modules` 唯讀之部署設 `W_BIN_CACHE`;但放置目標 canvas 套件之 `build/Release` 同樣須在首次呼叫時可寫(見 R-CANVAS-PLACE-01);②信任假設同規格 D6;③清單之 `extract.files` 只列 45 個執行檔,壓縮檔內之建置中繼檔不解出;④本版只有 win32-x64 一組,日後加他平台時於清單新增組(組名須含平台,`WCanvas` 依平台挑組)並調整 R-CANVAS-API-01.
-- 測試: `test/unit-binManifest.test.mjs`(M1/M2/M3/M6、45 成員、fsEnsureBins schema、版本三處同步、D1/E2、README O5、S5、T1 先放誘餌檔)、`test/api-WCanvas.test.mjs`(真實官方資產:首次下載、第二次快取、離線與鏡像、竄改、預取)、`test/unit-WCanvas.test.mjs`(假組:鏡像壓縮檔).T8(主幹模式)不適用.
+- 測試: `test/unit-binManifest.test.mjs`(M1/M2/M3/M6、45 成員、fsEnsureBins schema、版本三處同步、D1/E2、README O5、S5、T1 先放誘餌檔)、`test/api-WCanvas.test.mjs`(真實官方資產:首次下載、第二次快取、離線與鏡像、竄改、預取)、`test/unit-WCanvas.test.mjs`(假組:鏡像壓縮檔)、`test/unit-dist.test.mjs`(規則 6、7:副本並指定 cwd 執行 `toolg/gDistRollup.mjs`,驗 dist 之 external 三分支、匯出、自子資料夾 cwd 取至套件根之 `bin-cache/`).T8(主幹模式)不適用.
 
 ## R-CANVAS-PLACE-01 放置步驟:把檔案組複製到 canvas 套件之 build/Release(單一擁有者 `src/placeBins.mjs`)
 
@@ -54,3 +55,4 @@
 ## 變更紀錄
 
 - 2026-11-01 新建(w-canvas 1.0.0 工作樹,未發布):`bin/manifest.json`、`src/WCanvas.mjs`、`src/ensureBins.mjs`、`src/placeBins.mjs`、`toolg/`、測試 4 檔與 `test/tools/`、README 等.
+- 2026-11-02 依 dspec〈自有套件之發布與建置腳本〉:`toolg/gDistRollup.mjs` 改回標準之 `'./src'`、`'./dist'`(相對 cwd,發布列於套件根執行),撤除原以腳本位置推導路徑之寫法;R-BIN-EXE-01 之 6 改為「依 dspec」並將執行期套件根推得之語句獨立為 7(程式設計,保留);原 `unit-binManifest` 讀 toolg 原文之 external 檢查改在 `unit-dist` 驗建出之 dist.本套件不另立建置腳本之路徑、共用設定或檢查層之規則.

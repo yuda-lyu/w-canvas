@@ -197,8 +197,9 @@ describe(`bin/manifest.json`, function() {
         let fps = info.files.map((v) => v.path)
         assert.strict.deepStrictEqual(fps.filter((v) => /\.(exe|dll|node|msi|zip|7z|gz|tgz)$/i.test(v)), [])
         assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('bin/') || v.startsWith('bin-cache/')), ['bin/manifest.json'])
-        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/') || v.startsWith('sgud/') || v.startsWith('tmp/') || /^CLAUDE/.test(v)), [])
-        for (let k of ['package.json', 'README.md', 'LICENSE', 'src/WCanvas.mjs', 'src/ensureBins.mjs', 'src/placeBins.mjs', 'bin/manifest.json']) {
+        assert.strict.deepStrictEqual(fps.filter((v) => v.startsWith('test/_tmp/') || v.startsWith('tmp/') || /^CLAUDE/.test(v)), [])
+        //dspec〈自有套件之npm發布範圍〉原則4: sgud/一律不排除, 隨包發布
+        for (let k of ['package.json', 'README.md', 'LICENSE', 'src/WCanvas.mjs', 'src/ensureBins.mjs', 'src/placeBins.mjs', 'bin/manifest.json', 'sgud/state/state.md', 'sgud/rule/rulebook.md']) {
             assert.strict.equal(fps.includes(k), true, `the package must include ${k}`)
         }
         assert.strict.equal(info.size < 1024 * 1024, true, `the package must stay small: ${info.size}`) //無大檔入包(預建檔另行下載)
@@ -220,15 +221,6 @@ describe(`no self-written download in src/ (D1, E2)`, function() {
             assert.strict.equal(/fsDownloadFile(?!Verify)/.test(c), false, `${fp} imports fsDownloadFile`)
             assert.strict.equal(/fsMergeFiles|w-zip|mZip/.test(c), false, `${fp} assembles or extracts by itself`)
             assert.strict.equal(/raw\/refs\/heads|raw\.githubusercontent\.com|\bfetch\s*\(|https?:\/\/github\.com|child_process|tar\.exe/.test(c), false, `${fp} downloads or extracts by itself`)
-        }
-    })
-
-    it(`should list the node modules needed by fsEnsureBins and createRequire as external and globals of the UMD build (rollup)`, function() {
-        let c = fs.readFileSync('toolg/gDistRollup.mjs', 'utf8')
-        let ext = c.slice(c.indexOf('external:'))
-        let glb = c.slice(c.indexOf('globals = {'), c.indexOf('async function rp'))
-        for (let m of ['url', 'crypto', 'stream', 'stream/promises', 'child_process', 'fs', 'path', 'module']) {
-            assert.strict.equal(ext.includes('Object.keys(globals)') && glb.includes(`'${m}':`), true, `globals lacks ${m}`)
         }
     })
 

@@ -1,10 +1,8 @@
-import { fileURLToPath } from 'url'
 import rollupFiles from 'w-package-tools/src/rollupFiles.mjs'
 
 
-//fdSrc, fdTar, 以本腳本位置推導(rollupFiles會先清空fdTar, 不可隨cwd而清空他處之dist)
-let fdSrc = fileURLToPath(new URL('../src', import.meta.url))
-let fdTar = fileURLToPath(new URL('../dist', import.meta.url))
+let fdSrc = './src'
+let fdTar = './dist'
 
 
 //globals, 外部模組: Node內建模組(本套件為Node專用, runin為nodejs); child_process為wsemi之fsEnsureBins解壓所用, module為createRequire(找canvas套件)所用
