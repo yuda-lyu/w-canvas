@@ -1,10 +1,10 @@
 {
   "name": "w-canvas",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "main": "dist/w-canvas.umd.js",
   "dependencies": {
     "canvas": "3.2.3",
-    "wsemi": "^1.9.49"
+    "wsemi": "^1.9.51"
   },
   "devDependencies": {
     "w-package-tools": "^1.1.23"
