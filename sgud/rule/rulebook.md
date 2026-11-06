@@ -4,7 +4,7 @@
 
 ## R-BIN-EXE-01 官方預建檔(檔案組 canvas)之存放、取得、校驗與離線一律依制式規格(廠商檔,釘選版本標籤)
 
-- 依據: 制式規格 `C:\opensrcOper\dspec\外部執行檔之存放下載校驗與離線.md`(以下「規格」,條號 S/M/D/O/E/T 為其條號);使用者 2026-11-01 定案新增本套件(Gitea #32,cgsmdb 提出):canvas 3.2.3 之安裝腳本被 npm 12 擋下,`build/Release/canvas.node` 不存在,比照 w-ffmpeg 等於執行階段經 wsemi `fsEnsureBins` 取得並校驗官方預建檔,**載入方式採方案①**(複製到 canvas 套件之 `build/Release` 再載入官方 npm 之 canvas).**規格為上游真理源,本條只記本套件須長成什麼樣**;與規格不一致時以規格為準並回報主控.
+- 依據: 制式規格 `C:\opensrcOper\dspec\外部執行檔之存放下載校驗與離線.md`(以下「規格」,條號 S/M/D/O/E/T 為其條號);使用者 2026-11-01 定案新增本套件(Gitea #32,使用端提出):canvas 3.2.3 之安裝腳本被 npm 12 擋下,`build/Release/canvas.node` 不存在,比照 w-ffmpeg 等於執行階段經 wsemi `fsEnsureBins` 取得並校驗官方預建檔,**載入方式採方案①**(複製到 canvas 套件之 `build/Release` 再載入官方 npm 之 canvas).**規格為上游真理源,本條只記本套件須長成什麼樣**;與規格不一致時以規格為準並回報主控.
 - 單一擁有者: 取得一律經 `src/ensureBins.mjs`(轉呼叫 wsemi `fsEnsureBins`,`pkgRoot` 固定為本套件根,不轉傳 `floatingManifestUrl`);下載、快取、鏡像、校驗、tgz 解出與離線全由 wsemi 負責(需 wsemi ≥ 1.9.38,tgz 自該版起).**套件端不得自寫下載、快取、鏡像、校驗、解壓**(E2).
 - 規則:
   1. 清單 `bin/manifest.json`(`mode: "pinned"`、無 `commit`:只有廠商檔,無 repo 內之檔)一律由 `toolg/genBinManifest.mjs` 依官方預建檔之實際內容產生,不手寫 sha256(M1);頂層 `version` 為內附預建檔之版本(= canvas 版本);檔案組 `canvas`(M6)含 1 個壓縮檔(`url` 為官方版本標籤之資產網址,非 `releases/latest`,S3/M2;`extract.type` 為 `tgz`)與其 45 個成員(`build/Release/canvas.node` 與 44 個 dll,逐檔 sha256 與大小);**建置中繼檔**(`binding.sln`、`canvas.vcxproj`、`.filters`、`config.gypi`)與執行無關,不列入.壓縮檔之雜湊以 GitHub release API 公告之 asset digest 核對(M3,工具自動核對,取不到才於 note 載明「首次下載自算」).
