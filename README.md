@@ -81,10 +81,26 @@ test()
 - 環境變數:
   - `W_BIN_CACHE=<資料夾>`:快取改放 `<資料夾>/w-canvas/`(套件所在之 `node_modules` 唯讀時使用,多套件可共用同一資料夾)。注意複製目標 `canvas` 套件之 `build/Release` 仍須可寫(首次呼叫時);唯讀部署請於建置映像時先呼叫一次。
   - `W_BIN_MIRROR=<資料夾或 http(s) 網址>`:內網鏡像,先找鏡像再連 GitHub;結構為 `<鏡像>/w-canvas/<組識別>/build/Release/<檔>`(或壓縮檔 `<鏡像>/w-canvas/<sha256>/canvas-v3.2.3-napi-v7-win32-x64.tar.gz`)。鏡像之檔同樣以清單校驗,不符即不用。
-  - `W_BIN_OFFLINE=1`:不連網,只用快取與鏡像;缺檔時錯誤(`E_OFFLINE_MISSING`)會列出缺哪些檔、sha256、大小與應放之完整路徑。
+  - `W_BIN_OFFLINE=1`:不連網,只用快取與鏡像;缺檔時 reject 帶 `code === 'E_OFFLINE_MISSING'` 之錯誤,其訊息只列缺之檔案組(組名)與準備方法,不帶路徑、sha256 與成員檔名;整組之應放位置(`cachePath` 為組資料夾,有設鏡像時另有 `mirrorPath`)與逐成員之路徑、sha256、大小、是否缺(`bundle.files[]`)、壓縮檔來源(`bundle.archives[]`)在錯誤物件之 `err.missing[]`(見下)。
 - 離線部署:
   1. 在可連網之電腦設 `W_BIN_CACHE=<空資料夾>`,呼叫 `WCanvas.ensureBins()` 一次(只取至快取,不放置;亦不檢查作業系統)。
   2. 把該資料夾整個帶到內網電腦,設 `W_BIN_MIRROR=<該資料夾>`(全離線時另設 `W_BIN_OFFLINE=1`)。
+- 離線缺檔時之放置位置自 `err.missing[]` 讀取(整組須備妥,45 檔皆缺或部分缺時皆列全組):
+
+  ```js
+  import WCanvas from 'w-canvas'
+
+  try {
+      await WCanvas.ensureBins()
+  }
+  catch (err) {
+      if (err.code === 'E_OFFLINE_MISSING') {
+          //err.missing[0]: { name: 'canvas', cachePath(組資料夾), mirrorPath, bundle: { id, files: [{ path, sha256, size, missing, cachePath, mirrorPath, url, archive }], archives } }
+          //把整組放在 cachePath(或 mirrorPath)之下,各檔之路徑見 bundle.files[].cachePath(或 mirrorPath)
+          console.log(err.missing)
+      }
+  }
+  ```
 - 支援平台:本版只支援 `win32-x64`。其他平台若 `canvas` 自身之 `build/Release/canvas.node` 已存在(例如自行編譯),`WCanvas()` 直接載入它(不下載、不放置);否則 reject `E_PLATFORM`。
 - 版本綁定:預建檔須與 `canvas` 之 JavaScript 同版,本套件之 `dependencies` 釘選 `canvas` 之確切版本(目前 `3.2.3`),升版時 `canvas`、`bin/manifest.json` 一起改。已安裝之 `canvas` 版本與清單不同(例如專案以 `overrides` 強制其他版本)時 reject `E_VERSION`。
 - Windows 換版注意:`canvas.node` 與其 dll 被行程載入後無法覆蓋。本套件換版(清單內容不同)後,須先結束所有已載入舊版 `canvas` 之行程(node 服務、pm2、排程等)再呼叫,否則 reject `E_BIN_LOCKED`,訊息寫明被占用之檔與處置;已載入之行程不受影響。

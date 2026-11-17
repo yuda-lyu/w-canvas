@@ -189,9 +189,29 @@ describe(`WCanvas (real prebuilt files)`, function() {
         let r = await run(pkg, { cache, mirror: '', offline: true, log })
         assert.strict.equal(r.result.ok, false)
         assert.strict.equal(r.result.code, 'E_OFFLINE_MISSING', r.result.message)
-        assert.strict.equal(r.result.missing[0].name, 'canvas')
-        assert.strict.equal(r.result.message.includes(path.join(cache, 'w-canvas', bundleId)), true, r.result.message) //應放之快取路徑
-        assert.strict.equal(r.result.message.includes('canvas.node') && r.result.message.includes(members[0].sha256), true, r.result.message) //缺之檔名與sha256
+        //規格 O3、§8 T6(2026-11-18改)與〈輸入參數之檢測機制〉V20: 訊息只列組名與準備方法, 不帶sha256、路徑、成員檔名; 應放之快取路徑與缺之檔名、sha256在結構欄位err.missing[0](子行程以JSON回傳)
+        let mb = r.result.missing
+        let cacheGroup = path.join(cache, 'w-canvas', bundleId)
+        let byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+        assert.strict.equal(mb.length, 1)
+        assert.strict.equal(mb[0].name, 'canvas')
+        assert.strict.equal(mb[0].cachePath, cacheGroup) //應放之快取路徑(組資料夾)
+        assert.strict.equal(mb[0].mirrorPath, null) //未設鏡像
+        assert.strict.equal(mb[0].bundle.id, bundleId)
+        assert.strict.equal(mb[0].bundle.files.length, 45) //全組45檔(須整組備妥)
+        //缺之檔名與sha256、大小、應放位置: 逐成員與清單一致, 全部缺
+        assert.strict.deepStrictEqual(
+            [...mb[0].bundle.files].sort(byPath).map((f) => [f.path, f.sha256, f.size, f.missing, f.cachePath]),
+            [...members].sort(byPath).map((v) => [v.path, v.sha256, v.size, true, path.join(cacheGroup, ...v.path.split('/'))]),
+        )
+        assert.strict.equal(mb[0].bundle.files.some((f) => f.path === 'build/Release/canvas.node'), true)
+        //訊息: 含組名; 不含組資料夾、快取資料夾、任一成員之sha256
+        assert.strict.equal(r.result.message.includes('canvas'), true, r.result.message)
+        assert.strict.equal(r.result.message.includes(cacheGroup), false, r.result.message)
+        assert.strict.equal(r.result.message.includes(cache), false, r.result.message)
+        for (let v of members) {
+            assert.strict.equal(r.result.message.includes(v.sha256), false, r.result.message)
+        }
         assert.strict.equal(fs.existsSync(log), false)
         assert.strict.equal(fs.existsSync(path.join(pkg.fdCanvas, 'build')), false)
     })

@@ -2,6 +2,10 @@
 
 本檔為執行工作時特有之累積經驗,留給後續之嘗試、執行與判斷,由agent自行編列、擴充與維護.過長時抽出舊者為`experience_<年月日>.md`,並於本檔註明何時抽出.
 
+## 2026-11-18 離線缺檔訊息改結構欄位(eb1)
+
+- wsemi 1.9.64 起檔案組之 `E_OFFLINE_MISSING` 訊息不帶值(V20,連成員檔名亦不列):原案以訊息驗「應放之組資料夾」「缺之檔名與 sha256」,改驗 `err.missing[0]`——`cachePath`＝組資料夾、`bundle.files[]` 逐成員(與清單比對 path、sha256、size,全部 `missing: true`,`cachePath` 為組資料夾下各成員路徑)、`bundle.archives[0].archive`(壓縮檔之名稱、sha256、大小、網址);未設鏡像時 `mirrorPath` 為 `null`,另以設了空鏡像之假檔案組案驗鏡像位置.真 45 檔案在子行程執行,子行程之 `missing` 投影(`test/tools/childWCanvas.mjs`)原只取頂層欄位,須補 `bundle`.
+
 ## 2026-11-01 建立本套件(w-canvas 1.0.0)時之經驗
 
 - **官方預建檔之取得**: GitHub release API(`GET /repos/Automattic/node-canvas/releases/tags/v<版>`)之 `assets[].digest`(`sha256:<64>`)與 `size` 可核對官方資產,`toolg/genBinManifest.mjs` 即用它(規格 M3);官方 `win32-x64` 資產內 49 項,執行所需為 `build/Release/canvas.node` 與 44 個 dll 共 45 項,另 4 個建置中繼檔(`binding.sln`、`canvas.vcxproj`、`.filters`、`config.gypi`)不列入.prebuild-install 預設檔名含 `unknown`(`…-win32-unknown-x64`)者 404,實際資產名為 `…-win32-x64.tar.gz`.

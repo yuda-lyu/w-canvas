@@ -481,13 +481,43 @@ describe(`WCanvas (fake bundle)`, function() {
         })
 
         //離線(④): 無快取、無鏡像時E_OFFLINE_MISSING, 列出全組, 不連網、不放置; 環境變數W_BIN_OFFLINE與選項offline皆可
-        it(`should reject E_OFFLINE_MISSING when offline with an empty cache and no mirror, listing the whole bundle, without network nor placement`, async function() {
+        //規格 O3、§8 T6(2026-11-18改)與〈輸入參數之檢測機制〉V20: 訊息只列組名與準備方法, 不帶sha256、路徑、成員檔名; 應放之組資料夾與逐成員(path、sha256、size、missing、cachePath、mirrorPath)在結構欄位err.missing[0].bundle(結構欄位屬契約, 不在「訊息」之限)
+        it(`should reject E_OFFLINE_MISSING when offline with an empty cache and no mirror, listing the whole bundle in err.missing[] (the message carries no path nor sha256), without network nor placement`, async function() {
             let t = await setup('offline')
             let err = await catchErr(() => t.call({ offline: true }))
             assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
-            assert.strict.equal(err.missing[0].name, 'canvas')
-            assert.strict.equal(err.missing[0].bundle.files.length, 3)
-            assert.strict.equal(err.message.includes(path.join(t.base.cacheDir, fb.bundleId)), true, err.message)
+
+            //結構欄位: 單一缺項(整組), 組資料夾為應放之快取位置
+            let byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+            assert.strict.equal(err.missing.length, 1)
+            let m = err.missing[0]
+            assert.strict.equal(m.name, 'canvas')
+            assert.strict.equal(m.cachePath, path.join(t.base.cacheDir, fb.bundleId))
+            assert.strict.equal(m.mirrorPath, null) //未設鏡像
+            assert.strict.equal(m.sha256, null) //檔案組無單一sha256
+            assert.strict.equal(m.size, fb.members.reduce((a, v) => a + v.size, 0)) //全組總大小
+            assert.strict.equal(m.bundle.id, fb.bundleId)
+            //全組逐成員: 3檔皆缺, 各檔之sha256、大小與應放之快取位置
+            assert.strict.equal(m.bundle.files.length, 3)
+            assert.strict.deepStrictEqual(
+                [...m.bundle.files].sort(byPath).map((f) => [f.path, f.sha256, f.size, f.missing, f.cachePath, f.mirrorPath]),
+                [...fb.members].sort(byPath).map((v) => [v.path, v.sha256, v.size, true, path.join(t.base.cacheDir, fb.bundleId, ...v.path.split('/')), null]),
+            )
+            //來源為壓縮檔(各檔取自第0個壓縮檔), 壓縮檔之名稱、sha256、大小、網址
+            assert.strict.equal(m.bundle.files.every((f) => f.archive === 0), true)
+            assert.strict.equal(m.bundle.archives.length, 1)
+            assert.strict.deepStrictEqual(
+                [m.bundle.archives[0].archive.name, m.bundle.archives[0].archive.sha256, m.bundle.archives[0].archive.size, m.bundle.archives[0].archive.url, m.bundle.archives[0].archive.mirrorPath],
+                [fb.nameAsset, fb.manifest.bundles[0].archives[0].sha256, fb.tgz.length, fb.urlAsset, null],
+            )
+
+            //訊息: 含組名; 不含組識別、快取路徑、各成員之sha256
+            assert.strict.equal(err.message.includes('canvas'), true, err.message)
+            assert.strict.equal(err.message.includes(fb.bundleId), false, err.message)
+            assert.strict.equal(err.message.includes(t.base.cacheDir), false, err.message)
+            for (let v of fb.members) {
+                assert.strict.equal(err.message.includes(v.sha256), false, err.message)
+            }
             assert.strict.deepStrictEqual(fetched, [])
             assert.strict.equal(fs.existsSync(t.pkg.fdRelease), false)
 
@@ -496,7 +526,29 @@ describe(`WCanvas (fake bundle)`, function() {
                 return await catchErr(() => t.call({ offline: undefined }))
             })
             assert.strict.equal(err2 && err2.code, 'E_OFFLINE_MISSING', err2 && err2.message)
+            assert.strict.equal(err2.missing[0].cachePath, path.join(t.base.cacheDir, fb.bundleId))
+            assert.strict.equal(err2.message.includes(t.base.cacheDir), false, err2.message)
             assert.strict.deepStrictEqual(fetched, [])
+        })
+
+        //離線且設了鏡像(空資料夾): 組與各成員、壓縮檔之鏡像位置在結構欄位(未設鏡像時為null, 故上案驗不到), 訊息不帶該位置
+        it(`should give the mirror paths of the bundle, its files and its archive in err.missing[] and not in the message when offline with a mirror that lacks them`, async function() {
+            let t = await setup('offlineMirrorPaths')
+            let mirror = path.join(t.pkg.fdPkg, 'mirror-empty')
+            fs.mkdirSync(mirror, { recursive: true })
+            let err = await catchErr(() => t.call({ mirror, offline: true }))
+            assert.strict.equal(err && err.code, 'E_OFFLINE_MISSING', err && err.message)
+            let byPath = (a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)
+            let m = err.missing[0]
+            assert.strict.equal(m.mirrorPath, path.join(mirror, 'w-canvas', fb.bundleId))
+            assert.strict.deepStrictEqual(
+                [...m.bundle.files].sort(byPath).map((f) => [f.path, f.mirrorPath]),
+                [...fb.members].sort(byPath).map((v) => [v.path, path.join(mirror, 'w-canvas', fb.bundleId, ...v.path.split('/'))]),
+            )
+            assert.strict.equal(m.bundle.archives[0].archive.mirrorPath, path.join(mirror, 'w-canvas', fb.manifest.bundles[0].archives[0].sha256, fb.nameAsset))
+            assert.strict.equal(err.message.includes(mirror), false, err.message)
+            assert.strict.deepStrictEqual(fetched, [])
+            assert.strict.equal(fs.existsSync(t.pkg.fdRelease), false)
         })
 
         //鏡像(O1)可放壓縮檔: <鏡像>/<套件>/<壓縮檔之sha256>/<壓縮檔名>(README之手備鏡像說明), 離線時自其解出並逐檔校驗

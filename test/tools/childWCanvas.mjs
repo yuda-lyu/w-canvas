@@ -58,7 +58,21 @@ else {
     let err = r.err
     res.code = err && err.code
     res.message = String((err && err.message) || err)
-    res.missing = err && err.missing ? err.missing.map((m) => ({ name: m.name, sha256: m.sha256, size: m.size, cachePath: m.cachePath, mirrorPath: m.mirrorPath })) : null
+    //missing: 結構欄位err.missing[](V20: 應放之位置、sha256等不在訊息, 在此); 檔案組另帶bundle(逐成員之path、sha256、size、missing、cachePath、mirrorPath)
+    let projFile = (f) => {
+        return { path: f.path, sha256: f.sha256, size: f.size, missing: f.missing, cachePath: f.cachePath, mirrorPath: f.mirrorPath }
+    }
+    let projMissing = (m) => {
+        let bundle = null
+        if (m.bundle) {
+            bundle = { id: m.bundle.id, files: m.bundle.files.map(projFile) }
+        }
+        return { name: m.name, sha256: m.sha256, size: m.size, cachePath: m.cachePath, mirrorPath: m.mirrorPath, bundle }
+    }
+    res.missing = null
+    if (err && err.missing) {
+        res.missing = err.missing.map(projMissing)
+    }
 }
 console.log('RESULT ' + JSON.stringify(res))
 

@@ -1,6 +1,6 @@
 {
   "name": "w-canvas",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "main": "dist/w-canvas.umd.js",
   "dependencies": {
     "canvas": "3.2.3",
