@@ -1,13 +1,13 @@
 {
   "name": "w-canvas",
-  "version": "1.0.27",
+  "version": "1.0.28",
   "main": "dist/w-canvas.umd.js",
   "dependencies": {
     "canvas": "3.2.3",
-    "wsemi": "^1.9.70"
+    "wsemi": "^1.9.71"
   },
   "devDependencies": {
-    "w-package-tools": "^1.1.28"
+    "w-package-tools": "^1.1.29"
   },
   "scripts": {
     "test": "mocha --parallel \"test/*.test.mjs\" --timeout 180000",
